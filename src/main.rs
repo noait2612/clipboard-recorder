@@ -1,50 +1,91 @@
-use arboard::{Clipboard, Get, Set};
-use std::{thread, time};
-use std::path::Path;
-use bytes::Bytes;
-use std::io::{Read};
-#[derive(Debug, PartialEq, Eq)]
-enum ClipboardFormat {
-    Text,
-    Png,
-    Unknown(String), // For Not supported formats, as in NotInitialized, but I can indicate what was the format
-}
+mod database;
+mod clipboard_manager;
+mod types;
 
-fn main() {
-    let mut clipboard = Clipboard::new().unwrap();
-    let mut previous_text = String::new();
-    let mut previous_bytes: Vec<u8> = Vec::new();
-    let mut supported_formats = vec![ClipboardFormat::Text, ClipboardFormat::Png]; // Vec to hold GetFormat enums
+use std::env;
+use std::io::{self, Write};
+use crate::database::ClipboardDb;
+use crate::types::Command;
 
-
-    // TODO
-    // CR
-    // BUG
-    println!("Listening to clipboard for text, files, and images. Press Ctrl+C to exit.");
+fn run_interactive_shell(db: &ClipboardDb) {
+    println!("Welcome to the Clipboard Interactive Shell!");
 
     loop {
-        let mut current_content = String::new();
-        for i in 0..supported_formats.len() {
-            if supported_formats[i] == ClipboardFormat::Text  {
-                let text = clipboard.get_text().unwrap();
-                if text != previous_text {
-                    previous_text = text.to_string();
-                }
-                current_content = text.to_string(); //update current content
+        print!("clip> ");
+        io::stdout().flush().unwrap();
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        let command = Command::parse(input.trim());
+        match command {
+            Command::Exit => {
+                println!("Closing shell...");
+                break;
             }
-            /*
-            else if supported_formats[i] == ClipboardFormat::Png {
-                let image = clipboard.get_image().unwrap();
-                if image.bytes != previous_bytes.as_slice() {
-                    previous_bytes = image.bytes.to_vec();
+            Command::Help => {
+                println!("Available commands:");
+                println!("  list       - Show all pinned items");
+                println!("  pin <id>   - Pin an item to your history");
+                println!("  unpin <id> - Unpin an item");
+                println!("  copy <id>  - Send an item back to the OS clipboard");
+                println!("  exit       - Close this shell");
+            }
+            Command::List => {
+                let _ = db.print_pinned_items();
+            }
+            Command::Pin(id) => {
+                let _ = db.set_pin_status(id, true);
+            }
+            Command::Unpin(id) => {
+                let _ = db.set_pin_status(id, false);
+            }
+            Command::Copy(id) => {
+                if let Err(e) = clipboard_manager::copy_by_id(db, id) {
+                    eprintln!("Failed to copy: {}", e);
                 }
             }
-             */
-            else {
-                println!("Nope");
+            Command::Clear => {
+                print!("Are you sure you want to clear all history? (y/N): ");
+                io::stdout().flush().unwrap();
+                let mut confirm = String::new();
+                io::stdin().read_line(&mut confirm).unwrap();
+
+                if confirm.trim().to_lowercase() == "y" {
+                    let _ = db.clear_history();
+                } else {
+                    println!("Clear aborted.");
+                }
+            }
+            Command::Unknown => {
+                println!("Unknown command or invalid syntax. Type 'help' for options.");
             }
         }
-        thread::sleep(time::Duration::from_millis(100));
-        continue;
     }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+    log::info!("Clipboard service starting up");
+
+    let db = ClipboardDb::new()?;
+    let args: Vec<String> = env::args().collect();
+
+    // I do gt and not gt.eq since from some reason args contains a value in the first position by default.
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "shell" => {
+                run_interactive_shell(&db);
+            }
+            "clear" => {
+                let _ = db.clear_history();
+            }
+            _ => {
+                println!("I'm lazy maybe I'll implement later...");
+            }
+        }
+    }
+
+    clipboard_manager::start_daemon(&db)?;
+
+    Ok(())
 }
