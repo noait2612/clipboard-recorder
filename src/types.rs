@@ -1,16 +1,26 @@
+use crate::database::{ClipboardDb, HistoryEntry};
+use arboard::Clipboard;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContentType {
     Text,
     Image,
     File,
 }
-
 impl ContentType {
     pub fn as_str(&self) -> &'static str {
         match self {
             ContentType::Text => "text",
             ContentType::Image => "image",
             ContentType::File => "file",
+        }
+    }
+
+    pub fn extractor_index(&self) -> usize {
+        match self {
+            ContentType::File => 0,
+            ContentType::Image => 1,
+            ContentType::Text => 2,
         }
     }
 
@@ -35,7 +45,6 @@ pub enum Command {
     Clear,
     Unknown,
 }
-
 impl Command {
     pub fn parse(input: &str) -> Self {
         let parts: Vec<&str> = input.split_whitespace().collect();
@@ -66,4 +75,21 @@ impl Command {
             _ => Command::Unknown,
         }
     }
+}
+pub trait ClipboardExtractor {
+    fn try_save(
+        &self,
+        cb: &mut Clipboard,
+        db: &ClipboardDb,
+    ) -> Result<bool, Box<dyn std::error::Error>>;
+
+    fn try_restore(
+        &self,
+        db: &ClipboardDb,
+        cb: &mut Clipboard,
+        entry: &HistoryEntry,
+    ) -> Result<bool, Box<dyn std::error::Error>>;
+    fn clear_memory(&self);
+
+    fn get_preview(&self, entry: &HistoryEntry) -> String;
 }

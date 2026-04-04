@@ -1,15 +1,16 @@
 mod database;
 mod clipboard_manager;
 mod types;
+mod extractors;
 
 use std::env;
 use std::io::{self, Write};
 use crate::database::ClipboardDb;
-use crate::types::Command;
+use crate::types::{Command, ContentType};
 
 fn run_interactive_shell(db: &ClipboardDb) {
     println!("Welcome to the Clipboard Interactive Shell!");
-
+    let extractors = crate::extractors::get_all();
     loop {
         print!("clip> ");
         io::stdout().flush().unwrap();
@@ -31,7 +32,32 @@ fn run_interactive_shell(db: &ClipboardDb) {
                 println!("  exit       - Close this shell");
             }
             Command::List => {
-                let _ = db.print_pinned_items();
+                match db.get_pinned_items() {
+                    Ok(entries) => {
+                        let extractors = crate::extractors::get_all();
+                        println!("\n--- 📌 Pinned History ---");
+
+                        if entries.is_empty() {
+                            println!("   (No pinned items found)");
+                        }
+
+                        for entry in entries {
+                            // Use the index helper we discussed or a manual match
+                            let idx = entry.content_type.extractor_index();
+                            let preview = extractors[idx].get_preview(&entry);
+
+                            println!(
+                                "[{}] ({}) {} | Saved: {}",
+                                entry.id,
+                                entry.content_type.as_str(),
+                                preview,
+                                database::to_readable_time(entry.created_at)
+                            );
+                        }
+                        println!("-------------------------\n");
+                    }
+                    Err(e) => eprintln!("Failed to retrieve pinned items: {}", e),
+                }
             }
             Command::Pin(id) => {
                 let _ = db.set_pin_status(id, true);

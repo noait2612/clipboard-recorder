@@ -7,6 +7,7 @@ edition = "2024"
 arboard = "3.5.0"
 rusqlite = { version = "0.39", features = ["bundled"] }
 chrono = "0.4"
-image = "0.25.10"
+image = { version = "0.25", features = ["png"] }
 log = "0.4"
 env_logger = "0.11"
+sha2 = "0.10"

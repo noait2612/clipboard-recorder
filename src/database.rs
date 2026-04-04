@@ -1,10 +1,51 @@
-use rusqlite::{params, Connection, Result};
 use crate::types::ContentType;
+use chrono::{DateTime, Local, Utc};
+use log::{debug, error, info, warn};
+use rusqlite::{Connection, Result, params};
+
+// --- SQL Constants ---
+const QUERY_CREATE_TABLE: &str = "
+    CREATE TABLE IF NOT EXISTS history (
+        id INTEGER PRIMARY KEY,
+        content_type TEXT NOT NULL,
+        text_content TEXT,
+        image_blob BLOB,
+        is_pinned BOOLEAN NOT NULL DEFAULT 0,
+        created_at INTEGER DEFAULT (unixepoch())
+    )";
+
+const INSERT_QUERY: &str = "
+    INSERT INTO history (content_type, text_content, image_blob)
+    VALUES (?1, ?2, ?3)";
+
+const GET_ENTRY_QUERY: &str = "
+    SELECT id, content_type, text_content, image_blob, created_at
+    FROM history WHERE id = ?1";
+
+const GET_PINNED_QUERY: &str = "
+    SELECT id, content_type, text_content, image_blob, created_at
+    FROM history
+    WHERE is_pinned = 1
+    ORDER BY created_at DESC";
+
+const SET_PIN_QUERY: &str = "UPDATE history SET is_pinned = ?1 WHERE id = ?2";
+const TRUNCATE_QUERY: &str = "DELETE FROM history";
+const VACUUM_QUERY: &str = "VACUUM";
+const TIME_FORMAT: &str = "%m-%d-%Y %H:%M:%S";
+
+pub(crate) fn to_readable_time(ts: i64) -> String {
+    let naive = DateTime::from_timestamp(ts, 0).unwrap_or_default();
+    let local_time: DateTime<Local> = DateTime::from(naive);
+    let time_str = local_time.format(TIME_FORMAT).to_string();
+    time_str
+}
 
 pub struct HistoryEntry {
+    pub id: i64,
     pub content_type: ContentType,
     pub text_content: Option<String>,
     pub image_blob: Option<Vec<u8>>,
+    pub created_at: i64,
 }
 
 pub struct ClipboardDb {
@@ -13,98 +54,77 @@ pub struct ClipboardDb {
 
 impl ClipboardDb {
     pub fn new() -> Result<Self> {
+        debug!("Opening database connection: clipboard_history.db");
         let conn = Connection::open("clipboard_history.db")?;
-
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS history (
-                id INTEGER PRIMARY KEY,
-                content_type TEXT NOT NULL,
-                text_content TEXT,
-                image_blob BLOB,
-                is_pinned BOOLEAN NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL
-            )",
-            [],
-        )?;
-
+        conn.execute(QUERY_CREATE_TABLE, [])?;
         Ok(Self { conn })
     }
 
-    pub fn insert_entry(&self, c_type: ContentType, text: Option<&str>, img: Option<&[u8]>, time: &str) -> Result<()> {
-        self.conn.execute(
-            "INSERT INTO history (content_type, text_content, image_blob, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![c_type.as_str(), text, img, time],
-        )?;
+    pub fn insert_entry(
+        &self,
+        c_type: ContentType,
+        text: Option<&str>,
+        img: Option<&[u8]>,
+    ) -> Result<()> {
+        debug!("Inserting new {:?} entry into database", c_type);
+        self.conn
+            .execute(INSERT_QUERY, params![c_type.as_str(), text, img])?;
+        debug!("Database: Successfully saved new {:?}", c_type);
         Ok(())
     }
 
-    pub fn set_pin_status(&self, id: i64, pin_status: bool) -> Result<()> {
-        let pinned_int = if pin_status { 1 } else { 0 };
-        let rows_updated = self.conn.execute(
-            "UPDATE history SET is_pinned = ?1 WHERE id = ?2",
-            params![pinned_int, id],
-        )?;
+    pub fn set_pin_status(&self, id: i64, pinned: bool) -> Result<()> {
+        let status = if pinned { "pinned" } else { "unpinned" };
+        debug!("Updating pin status for ID: {} to {}", id, status);
 
-        if rows_updated > 0 {
-            println!("Successfully {} entry with ID {}.", if pin_status { "pinned" } else { "unpinned" }, id);
-        } else {
-            println!("No entry found with ID {}.", id);
-        }
+        self.conn
+            .execute(SET_PIN_QUERY, params![pinned as i32, id])?;
+        debug!(
+            "Item {} {}",
+            id,
+            if pinned { "pinned 📌" } else { "unpinned" }
+        );
         Ok(())
     }
 
-    pub fn print_pinned_items(&self) -> Result<()> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, content_type, text_content, created_at
-             FROM history WHERE is_pinned = 1 ORDER BY created_at DESC"
-        )?;
+    pub fn get_pinned_items(&self) -> Result<Vec<HistoryEntry>, Box<dyn std::error::Error>> {
+        debug!("Fetching pinned items from database");
+        let mut stmt = self.conn.prepare(GET_PINNED_QUERY)?;
 
-        let pinned_iter = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, String>(3)?,
-            ))
+        // 1. Map the rows to HistoryEntry structs
+        let item_iter = stmt.query_map([], |row| {
+            let ct_raw: String = row.get(1)?;
+            Ok(HistoryEntry {
+                id: row.get(0)?,
+                content_type: ContentType::from_str(&ct_raw).unwrap_or(ContentType::Text),
+                text_content: row.get(2)?,
+                image_blob: row.get(3)?,
+                created_at: row.get(4)?,
+            })
         })?;
 
-        println!("\n--- Pinned Items ---");
-        for item in pinned_iter {
-            if let Ok((id, _c_type, text, time)) = item {
-                let display_text = text.unwrap_or_else(|| "[Binary/Image Data]".to_string());
-                let short_text = if display_text.len() > 50 {
-                    format!("{}...", &display_text[..47]).replace('\n', " ")
-                } else {
-                    display_text.replace('\n', " ")
-                };
-                println!("[ID: {}] [{}] - {}", id, time, short_text);
-            }
-        }
-        println!("--------------------\n");
-        Ok(())
+        let items: Result<Vec<HistoryEntry>, rusqlite::Error> = item_iter.collect();
+
+        Ok(items?)
     }
-
     pub fn get_entry(&self, id: i64) -> Result<HistoryEntry> {
-        let mut stmt = self.conn.prepare(
-            "SELECT content_type, text_content, image_blob FROM history WHERE id = ?1"
-        )?;
-
-        stmt.query_row([id], |row| {
-            let ct_raw: String = row.get(0)?;
+        self.conn.query_row(GET_ENTRY_QUERY, [id], |row| {
+            let ct_raw: String = row.get(1)?;
             Ok(HistoryEntry {
+                id: row.get(0)?,
                 content_type: ContentType::from_str(&ct_raw).unwrap_or(ContentType::Text),
-                text_content: row.get(1)?,
-                image_blob: row.get(2)?,
+                text_content: row.get(2)?,
+                image_blob: row.get(3)?,
+                created_at: row.get(4)?,
             })
         })
     }
 
     pub fn clear_history(&self) -> Result<()> {
-        let rows_deleted = self.conn.execute("DELETE FROM history", [])?;
-        self.conn.execute("VACUUM", [])?; // Same as purge in oracle to return the size to os.
-        //log::info!("Database cleared. Deleted {} entries.", rows_deleted);
-        println!("Successfully cleared {} items from history.", rows_deleted);
-
+        warn!("Clearing all clipboard history from database!");
+        self.conn.execute(TRUNCATE_QUERY, [])?;
+        self.conn.execute(VACUUM_QUERY, [])?;
+        info!("History cleared and database vacuumed.");
         Ok(())
     }
 }
