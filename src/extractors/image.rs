@@ -25,6 +25,10 @@ impl ImageExtractor {
 }
 
 impl ClipboardExtractor for ImageExtractor {
+    fn can_handle(&self, content_type: &ContentType) -> bool {
+        matches!(content_type, ContentType::Image)
+    }
+
     fn try_save(&self, cb: &mut Clipboard, db: &ClipboardDb) -> Result<bool, Box<dyn std::error::Error>> {
         if let Ok(image_data) = cb.get_image() {
             let img_hash = Self::calculate_hash(&image_data.bytes);

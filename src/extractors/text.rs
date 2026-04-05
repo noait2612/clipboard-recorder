@@ -16,6 +16,10 @@ impl TextExtractor {
 }
 
 impl ClipboardExtractor for TextExtractor {
+    fn can_handle(&self, content_type: &ContentType) -> bool {
+        matches!(content_type, ContentType::Text)
+    }
+
     fn try_save(
         &self,
         cb: &mut Clipboard,

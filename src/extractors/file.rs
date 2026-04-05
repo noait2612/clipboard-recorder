@@ -17,6 +17,10 @@ impl FileExtractor {
 }
 
 impl ClipboardExtractor for FileExtractor {
+    fn can_handle(&self, content_type: &ContentType) -> bool {
+        matches!(content_type, ContentType::File)
+    }
+
     fn try_save(
         &self,
         cb: &mut Clipboard,

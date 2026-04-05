@@ -40,6 +40,7 @@ pub enum Command {
     Unpin(i64),
     Copy(i64),
     List,
+    ListPinned,
     Help,
     Exit,
     Clear,
@@ -77,6 +78,8 @@ impl Command {
     }
 }
 pub trait ClipboardExtractor {
+    fn can_handle(&self, content_type: &ContentType) -> bool;
+
     fn try_save(
         &self,
         cb: &mut Clipboard,

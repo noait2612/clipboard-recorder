@@ -28,12 +28,17 @@ const GET_PINNED_QUERY: &str = "
     WHERE is_pinned = 1
     ORDER BY created_at DESC";
 
+const GET_ENTRIES_QUERY: &str = "
+    SELECT id, content_type, text_content, image_blob, created_at
+    FROM history
+    ORDER BY created_at DESC";
+
 const SET_PIN_QUERY: &str = "UPDATE history SET is_pinned = ?1 WHERE id = ?2";
 const TRUNCATE_QUERY: &str = "DELETE FROM history";
 const VACUUM_QUERY: &str = "VACUUM";
 const TIME_FORMAT: &str = "%m-%d-%Y %H:%M:%S";
 
-pub(crate) fn to_readable_time(ts: i64) -> String {
+pub fn to_readable_time(ts: i64) -> String {
     let naive = DateTime::from_timestamp(ts, 0).unwrap_or_default();
     let local_time: DateTime<Local> = DateTime::from(naive);
     let time_str = local_time.format(TIME_FORMAT).to_string();
@@ -45,7 +50,7 @@ pub struct HistoryEntry {
     pub content_type: ContentType,
     pub text_content: Option<String>,
     pub image_blob: Option<Vec<u8>>,
-    pub created_at: i64,
+    pub created_at: String,
 }
 
 pub struct ClipboardDb {
@@ -99,7 +104,7 @@ impl ClipboardDb {
                 content_type: ContentType::from_str(&ct_raw).unwrap_or(ContentType::Text),
                 text_content: row.get(2)?,
                 image_blob: row.get(3)?,
-                created_at: row.get(4)?,
+                created_at: to_readable_time(row.get(4)?),
             })
         })?;
 
@@ -107,6 +112,28 @@ impl ClipboardDb {
 
         Ok(items?)
     }
+
+    pub fn get_ordered_items(&self) -> Result<Vec<HistoryEntry>, Box<dyn std::error::Error>> {
+        debug!("Fetching items from database");
+        let mut stmt = self.conn.prepare(GET_ENTRIES_QUERY)?;
+
+        // 1. Map the rows to HistoryEntry structs
+        let item_iter = stmt.query_map([], |row| {
+            let ct_raw: String = row.get(1)?;
+            Ok(HistoryEntry {
+                id: row.get(0)?,
+                content_type: ContentType::from_str(&ct_raw).unwrap_or(ContentType::Text),
+                text_content: row.get(2)?,
+                image_blob: row.get(3)?,
+                created_at: to_readable_time(row.get(4)?),
+            })
+        })?;
+
+        let items: Result<Vec<HistoryEntry>, rusqlite::Error> = item_iter.collect();
+
+        Ok(items?)
+    }
+
     pub fn get_entry(&self, id: i64) -> Result<HistoryEntry> {
         self.conn.query_row(GET_ENTRY_QUERY, [id], |row| {
             let ct_raw: String = row.get(1)?;
@@ -115,7 +142,7 @@ impl ClipboardDb {
                 content_type: ContentType::from_str(&ct_raw).unwrap_or(ContentType::Text),
                 text_content: row.get(2)?,
                 image_blob: row.get(3)?,
-                created_at: row.get(4)?,
+                created_at: to_readable_time(row.get(4)?),
             })
         })
     }

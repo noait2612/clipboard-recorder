@@ -2,10 +2,6 @@ mod image;
 mod text;
 mod file;
 
-pub use text::TextExtractor;
-pub use image::ImageExtractor;
-pub use file::FileExtractor;
-
 use crate::types::ClipboardExtractor;
 
 pub fn get_all() -> Vec<Box<dyn ClipboardExtractor>> {

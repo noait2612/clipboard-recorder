@@ -31,10 +31,10 @@ fn run_interactive_shell(db: &ClipboardDb) {
                 println!("  copy <id>  - Send an item back to the OS clipboard");
                 println!("  exit       - Close this shell");
             }
-            Command::List => {
+            Command::ListPinned => {
                 match db.get_pinned_items() {
                     Ok(entries) => {
-                        let extractors = crate::extractors::get_all();
+                        let extractors = extractors::get_all();
                         println!("\n--- 📌 Pinned History ---");
 
                         if entries.is_empty() {
@@ -42,16 +42,44 @@ fn run_interactive_shell(db: &ClipboardDb) {
                         }
 
                         for entry in entries {
-                            // Use the index helper we discussed or a manual match
-                            let idx = entry.content_type.extractor_index();
-                            let preview = extractors[idx].get_preview(&entry);
+                            let preview = extractors.iter()
+                                .find(|ext| ext.can_handle(&entry.content_type))
+                                .map(|ext| ext.get_preview(&entry))
+                                .unwrap_or_else(|| "Unknown Content".to_string());
 
                             println!(
                                 "[{}] ({}) {} | Saved: {}",
                                 entry.id,
                                 entry.content_type.as_str(),
                                 preview,
-                                database::to_readable_time(entry.created_at)
+                                entry.created_at
+                            );
+                        }
+                        println!("-------------------------\n");
+                    }
+                    Err(e) => eprintln!("Failed to retrieve pinned items: {}", e),
+                }
+            }
+            Command::List => {
+                match db.get_ordered_items() {
+                    Ok(entries) => {
+                        let extractors = extractors::get_all();
+                        if entries.is_empty() {
+                            println!("   (No items found)");
+                        }
+
+                        for entry in entries {
+                            let preview = extractors.iter()
+                                .find(|ext| ext.can_handle(&entry.content_type))
+                                .map(|ext| ext.get_preview(&entry))
+                                .unwrap_or_else(|| "Unknown Content".to_string());
+
+                            println!(
+                                "[{}] ({}) {} | Saved: {}",
+                                entry.id,
+                                entry.content_type.as_str(),
+                                preview,
+                                entry.created_at
                             );
                         }
                         println!("-------------------------\n");
