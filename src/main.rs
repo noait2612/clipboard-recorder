@@ -1,8 +1,8 @@
 mod database;
-mod daemon;
 mod types;
 mod formatters;
 mod gui;
+mod service;
 
 use std::env;
 use std::sync::Arc;
@@ -11,9 +11,8 @@ use database::ClipboardDb;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() > 1 && args[1] == "ui" {
+    let mode = std::env::var("CLIP_MODE").unwrap_or_else(|_| "service".to_string());
+    if mode == "ui" {
         let db = ClipboardDb::new()?;
         let options = eframe::NativeOptions {
             viewport: eframe::egui::ViewportBuilder::default()
@@ -29,9 +28,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ).unwrap();
 
     } else {
-        log::info!("Starting background daemon");
+        log::info!("Starting service");
         let db = Arc::new(ClipboardDb::new()?);
-        daemon::run_background_service(db)?;
+        service::start(db)?;
     }
 
     Ok(())

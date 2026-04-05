@@ -61,7 +61,7 @@ impl ClipboardSerializer for FileFormatter {
         log::debug!("FileExtractor: Hash changed. New content detected.");
         db.insert_entry(ContentType::File, Some(&text), None)?;
         *last = current_hash;
-        return Ok(true);
+        Ok(true)
     }
 
     fn clear_memory(&self) {

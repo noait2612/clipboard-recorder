@@ -43,7 +43,6 @@ impl eframe::App for ClipboardGui {
                                 PreviewContent::Text(text) => {
                                     if ui.button(text).clicked() {
                                         Self::send_command_to_daemon(Command::Copy(item.id));
-                                        std::process::exit(0); // Close GUI on copy
                                     }
                                 }
                                 PreviewContent::Image(bytes) => {
@@ -51,7 +50,6 @@ impl eframe::App for ClipboardGui {
                                     let img = egui::Image::from_bytes(uri, bytes).max_width(150.0);
                                     if ui.add(egui::ImageButton::new(img)).clicked() {
                                         Self::send_command_to_daemon(Command::Copy(item.id));
-                                        std::process::exit(0);
                                     }
                                 }
                             }
