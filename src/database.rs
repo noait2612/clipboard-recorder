@@ -30,10 +30,11 @@ const GET_PINNED_QUERY: &str = "
     WHERE is_pinned = 1
     ORDER BY created_at DESC";
 
-const GET_ENTRIES_QUERY: &str = "
+const GET_PAGINATED_QUERY: &str = "
     SELECT id, content_type, text_content, image_blob, created_at
     FROM history
-    ORDER BY created_at DESC";
+    ORDER BY created_at DESC
+    LIMIT ?1 OFFSET ?2";
 
 const SET_PIN_QUERY: &str = "UPDATE history SET is_pinned = ?1 WHERE id = ?2";
 const TRUNCATE_QUERY: &str = "DELETE FROM history";
@@ -115,25 +116,23 @@ impl ClipboardDb {
         Ok(items?)
     }
 
-    pub fn get_ordered_items(&self) -> Result<Vec<HistoryEntry>, Box<dyn std::error::Error>> {
-        debug!("Fetching items from database");
+    pub fn get_items_paginated(&self, limit: i64, offset: i64) -> Result<Vec<HistoryEntry>, Box<dyn std::error::Error>> {
+        debug!("Fetching items limit: {}, offset: {}", limit, offset);
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(GET_ENTRIES_QUERY)?;
+        let mut stmt = conn.prepare(GET_PAGINATED_QUERY)?;
 
-        // 1. Map the rows to HistoryEntry structs
-        let item_iter = stmt.query_map([], |row| {
+        let item_iter = stmt.query_map(params![limit, offset], |row| {
             let ct_raw: String = row.get(1)?;
             Ok(HistoryEntry {
                 id: row.get(0)?,
                 content_type: ContentType::from_str(&ct_raw).unwrap_or(ContentType::Text),
                 text_content: row.get(2)?,
                 image_blob: row.get(3)?,
-                created_at: to_readable_time(row.get(4)?),
+                created_at: crate::database::to_readable_time(row.get(4)?),
             })
         })?;
 
         let items: Result<Vec<HistoryEntry>, rusqlite::Error> = item_iter.collect();
-
         Ok(items?)
     }
 

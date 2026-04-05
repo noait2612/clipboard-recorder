@@ -1,12 +1,10 @@
 mod database;
-mod types;
 mod formatters;
 mod gui;
 mod service;
-
-use std::env;
-use std::sync::Arc;
+mod types;
 use database::ClipboardDb;
+use std::sync::Arc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
@@ -24,9 +22,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eframe::run_native(
             "ClipRust",
             options,
-            Box::new(|cc| Box::new(gui::ClipboardGui::new(cc, db))),
-        ).unwrap();
+            Box::new(|cc| {
+                let mut fonts = eframe::egui::FontDefinitions::default();
 
+                fonts.font_data.insert(
+                    "default_font".to_owned(),
+                    eframe::egui::FontData::from_static(include_bytes!("assets/DavidLibre-Regular.ttf")),
+                );
+
+                fonts.families
+                    .get_mut(&eframe::egui::FontFamily::Proportional)
+                    .unwrap()
+                    .insert(0, "default_font".to_owned());
+
+                // 4. Make it the DEFAULT for all code/monospace text
+                fonts.families
+                    .get_mut(&eframe::egui::FontFamily::Monospace)
+                    .unwrap()
+                    .insert(0, "default_font".to_owned());
+
+                // 5. Apply the override to the UI context
+                cc.egui_ctx.set_fonts(fonts);
+
+                Box::new(gui::ClipboardGui::new(cc, db))
+            }),
+        ).unwrap();
     } else {
         log::info!("Starting service");
         let db = Arc::new(ClipboardDb::new()?);
