@@ -6,14 +6,14 @@ use std::os::unix::net::UnixListener;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use crate::formatters::{clear_all_except, find_deserializer, find_serializer, seed_all_formatters};
+use crate::formatters::{clear_all_except, find_deserializer, find_serializer, seed_formatters};
 
 pub fn start(db: Arc<ClipboardDb>) -> Result<(), Box<dyn std::error::Error>> {
     let watcher_db = Arc::clone(&db);
 
     thread::spawn(move || {
         let mut clipboard = Clipboard::new().expect("Clipboard init failed");
-        seed_all_formatters(&mut clipboard);
+        seed_formatters(&mut clipboard);
         loop {
             if let Some(saver) = find_serializer(&mut clipboard) {
                 if saver.save(&mut clipboard, &watcher_db).unwrap_or(false) {
