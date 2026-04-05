@@ -2,7 +2,8 @@ use crate::types::ContentType;
 use chrono::{DateTime, Local, Utc};
 use log::{debug, error, info, warn};
 use rusqlite::{Connection, Result, params};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::error;
 use std::sync::Mutex;
 
 // --- SQL Constants ---
@@ -36,6 +37,13 @@ const GET_PAGINATED_QUERY: &str = "
     ORDER BY created_at DESC
     LIMIT ?1 OFFSET ?2";
 
+const SEARCH_PAGINATED_QUERY: &str = "
+    SELECT id, content_type, text_content, image_blob, created_at
+    FROM history
+    WHERE text_content LIKE ?1
+    ORDER BY created_at DESC
+    LIMIT ?2 OFFSET ?3";
+
 const SET_PIN_QUERY: &str = "UPDATE history SET is_pinned = ?1 WHERE id = ?2";
 const TRUNCATE_QUERY: &str = "DELETE FROM history";
 const VACUUM_QUERY: &str = "VACUUM";
@@ -66,7 +74,9 @@ impl ClipboardDb {
         debug!("Opening database connection: clipboard_history.db");
         let conn = Connection::open("clipboard_history.db")?;
         conn.execute(QUERY_CREATE_TABLE, [])?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     pub fn insert_entry(
@@ -95,7 +105,7 @@ impl ClipboardDb {
         Ok(())
     }
 
-    pub fn get_pinned_items(&self) -> Result<Vec<HistoryEntry>, Box<dyn std::error::Error>> {
+    pub fn get_pinned_items(&self) -> Result<Vec<HistoryEntry>, Box<dyn error::Error>> {
         debug!("Fetching pinned items from database");
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(GET_PINNED_QUERY)?;
@@ -116,7 +126,11 @@ impl ClipboardDb {
         Ok(items?)
     }
 
-    pub fn get_items_paginated(&self, limit: i64, offset: i64) -> Result<Vec<HistoryEntry>, Box<dyn std::error::Error>> {
+    pub fn get_items_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<HistoryEntry>, Box<dyn error::Error>> {
         debug!("Fetching items limit: {}, offset: {}", limit, offset);
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(GET_PAGINATED_QUERY)?;
@@ -128,7 +142,7 @@ impl ClipboardDb {
                 content_type: ContentType::from_str(&ct_raw).unwrap_or(ContentType::Text),
                 text_content: row.get(2)?,
                 image_blob: row.get(3)?,
-                created_at: crate::database::to_readable_time(row.get(4)?),
+                created_at: to_readable_time(row.get(4)?),
             })
         })?;
 
@@ -148,6 +162,29 @@ impl ClipboardDb {
                 created_at: to_readable_time(row.get(4)?),
             })
         })
+    }
+
+    pub fn search_items_paginated(
+        &self,
+        query: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<HistoryEntry>, Box<dyn error::Error>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(SEARCH_PAGINATED_QUERY)?;
+        let item_iter = stmt.query_map(params![format!("%{}%", query), limit, offset], |row| {
+            let ct_raw: String = row.get(1)?;
+            Ok(HistoryEntry {
+                id: row.get(0)?,
+                content_type: ContentType::from_str(&ct_raw).unwrap_or(ContentType::Text),
+                text_content: row.get(2)?,
+                image_blob: row.get(3)?,
+                created_at: to_readable_time(row.get(4)?),
+            })
+        })?;
+
+        let items: Result<Vec<HistoryEntry>, rusqlite::Error> = item_iter.collect();
+        Ok(items?)
     }
 
     pub fn clear_history(&self) -> Result<()> {

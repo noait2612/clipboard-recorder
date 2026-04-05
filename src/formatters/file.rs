@@ -50,9 +50,8 @@ impl ClipboardSerializer for FileFormatter {
         db: &ClipboardDb,
     ) -> Result<bool, Box<dyn std::error::Error>> {
         let text = cb.get_text()?;
-        let mut hasher = Sha256::new();
-        hasher.update(text.as_bytes());
-        let current_hash = format!("{:x}", hasher.finalize());
+        let hash = Sha256::digest(text.as_bytes());
+        let current_hash = hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
         let mut last = self.last_hash.lock().unwrap();
         if *last == current_hash {
             return Ok(true); // Already saved, we don't need to do anything.
