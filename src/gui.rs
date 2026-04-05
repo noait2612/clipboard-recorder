@@ -1,11 +1,12 @@
 use crate::database::ClipboardDb;
 use crate::formatters::find_deserializer;
-use crate::types::{Command, PreviewContent};
-use eframe::egui::Ui;
+use crate::types::{Command, ContentType, PreviewContent};
 use eframe::egui;
+use eframe::egui::Ui;
+use log::error;
+use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::net::UnixStream;
-
 use unicode_bidi::BidiInfo;
 
 pub struct GuiItem {
@@ -21,14 +22,13 @@ pub struct ClipboardGui {
     has_more: bool,
     search_query: String,
     is_loading: bool,
+    textures: HashMap<i64, egui::TextureHandle>,
 }
 
 impl ClipboardGui {
     pub fn new(cc: &eframe::CreationContext<'_>, db: ClipboardDb) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
-
-        let limit = 20;
-
+        let limit = 10;
         let mut app = Self {
             items: Vec::new(),
             db,
@@ -37,6 +37,7 @@ impl ClipboardGui {
             has_more: true,
             search_query: String::new(),
             is_loading: false,
+            textures: HashMap::new(),
         };
 
         app.load_more();
@@ -95,9 +96,20 @@ impl ClipboardGui {
     }
 
     fn send_command_to_daemon(cmd: Command) {
-        if let Ok(mut stream) = UnixStream::connect("/tmp/clip_rust.sock") {
-            if let Ok(msg) = serde_json::to_string(&cmd) {
-                let _ = stream.write_all(msg.as_bytes());
+        let socket_path = "/tmp/clip_rust.sock";
+
+        match UnixStream::connect(socket_path) {
+            Ok(mut stream) => {
+                if let Ok(msg) = serde_json::to_string(&cmd) {
+                    if let Err(e) = stream.write_all(msg.as_bytes()) {
+                        log::error!("Failed to write to daemon socket: {}", e);
+                    } else {
+                        log::debug!("Command {:?} sent to daemon successfully", cmd);
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Could not connect to daemon at {}: {}", socket_path, e);
             }
         }
     }
@@ -105,6 +117,7 @@ impl ClipboardGui {
 
 impl eframe::App for ClipboardGui {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        ui.ctx().set_pixels_per_point(1.2);
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("🔍");
@@ -160,41 +173,59 @@ impl eframe::App for ClipboardGui {
                         let mut trigger_load = false;
 
                         for item in &self.items {
-                            ui.group(|ui| {
-                                ui.vertical_centered(|ui| {
-                                    match &item.preview {
-                                        PreviewContent::Text(text) => {
-                                            if ui.button(text).clicked() {
-                                                Self::send_command_to_daemon(Command::Copy(
-                                                    item.id,
-                                                ));
-                                                ui.ctx().send_viewport_cmd(
-                                                    egui::ViewportCommand::Close,
-                                                );
+                            egui::Frame::default()
+                                .inner_margin(egui::Margin::same(4))
+                                .corner_radius(4.0)
+                                .show(ui, |ui| {
+                                    ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                        match &item.preview {
+                                            PreviewContent::Text(text) => {
+                                                if ui.button(text).clicked() {
+                                                    Self::send_command_to_daemon(Command::Copy(item.id));
+                                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                                                }
+                                            }
+                                            PreviewContent::Image(bytes) => {
+                                                ui.push_id(item.id, |ui| {
+                                                    if !self.textures.contains_key(&item.id) {
+                                                        if let Ok(image) = image::load_from_memory(bytes) {
+                                                            let image = image.to_rgba8();
+                                                            let size = [image.width() as usize, image.height() as usize];
+                                                            let pixels = image.into_vec();
+                                                            let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                                                            let texture = ui.ctx().load_texture(
+                                                                format!("clipboard_img_{}", item.id),
+                                                                color_image,
+                                                                egui::TextureOptions::default(),
+                                                            );
+
+                                                            self.textures.insert(item.id, texture);
+                                                        }
+                                                    }
+
+                                                    if let Some(texture) = self.textures.get(&item.id) {
+                                                        let image = egui::Image::new(texture)
+                                                            .maintain_aspect_ratio(true)
+                                                            .max_size(egui::vec2(200.0, 200.0))
+                                                            .corner_radius(4.0);
+
+                                                        let img_button = egui::Button::image(image)
+                                                            .fill(egui::Color32::TRANSPARENT)
+                                                            .corner_radius(8.0);
+                                                        let response = ui.add_sized([200.0, 200.0], img_button);
+
+                                                        if response.clicked() {
+                                                            Self::send_command_to_daemon(Command::Copy(item.id));
+                                                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                                                        }
+                                                    }
+                                                });
                                             }
                                         }
-                                        PreviewContent::Image(bytes) => {
-                                            ui.set_min_height(150.0);
-
-                                            let uri = format!("bytes://{}.png", item.id);
-                                            let img = egui::Image::from_bytes(uri, bytes.clone())
-                                                .max_size(egui::vec2(150.0, 150.0))
-                                                .show_loading_spinner(true);
-
-                                            if ui.add(egui::ImageButton::new(img)).clicked() {
-                                                Self::send_command_to_daemon(Command::Copy(
-                                                    item.id,
-                                                ));
-                                                ui.ctx().send_viewport_cmd(
-                                                    egui::ViewportCommand::Close,
-                                                );
-                                            }
-                                        }
-                                    }
+                                    });
                                 });
-                            });
 
-                            ui.add_space(5.0);
+                            ui.add_space(2.0);
                         }
 
                         if self.has_more && !self.is_loading {

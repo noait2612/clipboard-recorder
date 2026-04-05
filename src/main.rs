@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let options = eframe::NativeOptions {
             viewport: eframe::egui::ViewportBuilder::default()
-                .with_inner_size([400.0, 600.0])
+                .with_inner_size([300.0, 300.0])
                 .with_always_on_top(),
             ..Default::default()
         };
