@@ -59,7 +59,10 @@ impl ClipboardSerializer for TextFormatter {
             }
 
             let hash = Sha256::digest(text.as_bytes());
-            let current_hash = hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            let current_hash = hash
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>();
 
             let mut last = self.last_hash.lock().unwrap();
             if *last == current_hash {
@@ -77,5 +80,18 @@ impl ClipboardSerializer for TextFormatter {
     fn clear_memory(&self) {
         let mut last = self.last_hash.lock().unwrap();
         last.clear();
+    }
+
+    fn seed_memory(&self, cb: &mut Clipboard) {
+        if self.can_save(cb) {
+            let hash = Sha256::digest(cb.get_text().unwrap().as_bytes());
+            let current_hash = hash
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>();
+            let mut last = self.last_hash.lock().unwrap();
+            *last = current_hash;
+            log::debug!("TextFormatter: Memory seeded with current clipboard.");
+        }
     }
 }

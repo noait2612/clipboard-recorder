@@ -54,6 +54,8 @@ pub trait ClipboardSerializer: Send + Sync {
     ) -> Result<bool, Box<dyn std::error::Error>>;
 
     fn clear_memory(&self);
+
+    fn seed_memory(&self, cb: &mut Clipboard);
 }
 
 pub trait ClipboardDeserializer: Send + Sync {

@@ -18,6 +18,13 @@ fn get_registry() -> &'static Vec<Box<dyn ClipboardFormatter>> {
     })
 }
 
+pub fn seed_all_formatters(cb: &mut Clipboard) {
+    let registry = get_registry();
+    for ext in registry {
+        ext.seed_memory(cb);
+    }
+}
+
 pub fn find_serializer(cb: &mut Clipboard) -> Option<&'static dyn ClipboardSerializer> {
     get_registry()
         .iter()

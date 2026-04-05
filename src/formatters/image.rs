@@ -120,4 +120,13 @@ impl ClipboardSerializer for ImageFormatter {
         let mut last = self.last_hash.lock().unwrap();
         *last = 0;
     }
+
+    fn seed_memory(&self, cb: &mut Clipboard) {
+        if self.can_save(cb) {
+            let img_hash = Self::calculate_hash(&cb.get_image().unwrap().bytes);
+            let mut last = self.last_hash.lock().unwrap();
+            *last = img_hash;
+            log::debug!("ImageFormatter: Memory seeded with current clipboard.");
+        }
+    }
 }
