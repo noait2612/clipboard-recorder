@@ -1,7 +1,8 @@
 use crate::database::{ClipboardDb, HistoryEntry};
 use arboard::Clipboard;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ContentType {
     Text,
     Image,
@@ -16,14 +17,6 @@ impl ContentType {
         }
     }
 
-    pub fn extractor_index(&self) -> usize {
-        match self {
-            ContentType::File => 0,
-            ContentType::Image => 1,
-            ContentType::Text => 2,
-        }
-    }
-
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "text" => Some(ContentType::Text),
@@ -34,7 +27,7 @@ impl ContentType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Command {
     Pin(i64),
     Unpin(i64),
@@ -46,53 +39,34 @@ pub enum Command {
     Clear,
     Unknown,
 }
-impl Command {
-    pub fn parse(input: &str) -> Self {
-        let parts: Vec<&str> = input.split_whitespace().collect();
-        if parts.is_empty() {
-            return Command::Unknown;
-        }
-
-        match parts[0] {
-            "list" => Command::List,
-            "help" => Command::Help,
-            "exit" | "quit" => Command::Exit,
-            "clear" => Command::Clear,
-            "pin" | "unpin" | "copy" => {
-                if parts.len() < 2 {
-                    return Command::Unknown;
-                }
-                if let Ok(id) = parts[1].parse::<i64>() {
-                    match parts[0] {
-                        "pin" => Command::Pin(id),
-                        "unpin" => Command::Unpin(id),
-                        "copy" => Command::Copy(id),
-                        _ => Command::Unknown,
-                    }
-                } else {
-                    Command::Unknown
-                }
-            }
-            _ => Command::Unknown,
-        }
-    }
+pub enum PreviewContent {
+    Text(String),
+    Image(Vec<u8>),
 }
-pub trait ClipboardExtractor {
-    fn can_handle(&self, content_type: &ContentType) -> bool;
 
-    fn try_save(
+pub trait ClipboardSerializer: Send + Sync {
+    fn can_save(&self, cb: &mut Clipboard) -> bool;
+
+    fn save(
         &self,
         cb: &mut Clipboard,
         db: &ClipboardDb,
     ) -> Result<bool, Box<dyn std::error::Error>>;
 
-    fn try_restore(
+    fn clear_memory(&self);
+}
+
+pub trait ClipboardDeserializer: Send + Sync {
+    fn can_handle(&self, content_type: &ContentType) -> bool;
+
+    fn restore(
         &self,
-        db: &ClipboardDb,
         cb: &mut Clipboard,
         entry: &HistoryEntry,
     ) -> Result<bool, Box<dyn std::error::Error>>;
-    fn clear_memory(&self);
 
-    fn get_preview(&self, entry: &HistoryEntry) -> String;
+    fn get_preview(&self, entry: &HistoryEntry) -> PreviewContent;
 }
+
+pub trait ClipboardFormatter: ClipboardSerializer + ClipboardDeserializer + Send + Sync {}
+impl<T: ClipboardSerializer + ClipboardDeserializer + Send + Sync> ClipboardFormatter for T {}

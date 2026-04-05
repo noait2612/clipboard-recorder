@@ -25,7 +25,7 @@ pub fn start_daemon(db: &ClipboardDb) -> Result<(), Box<dyn std::error::Error>> 
         }
 
         if saved_something {
-            debug!("New content saved. Clearing memory of all extractors to prevent stale states.");
+            debug!("New content saved. Clearing memory of all formatters to prevent stale states.");
             for extractor in &extractors {
                 extractor.clear_memory();
             }

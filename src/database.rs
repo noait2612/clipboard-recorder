@@ -2,6 +2,8 @@ use crate::types::ContentType;
 use chrono::{DateTime, Local, Utc};
 use log::{debug, error, info, warn};
 use rusqlite::{Connection, Result, params};
+use serde::{Serialize, Deserialize};
+use std::sync::Mutex;
 
 // --- SQL Constants ---
 const QUERY_CREATE_TABLE: &str = "
@@ -45,6 +47,7 @@ pub fn to_readable_time(ts: i64) -> String {
     time_str
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub id: i64,
     pub content_type: ContentType,
@@ -54,7 +57,7 @@ pub struct HistoryEntry {
 }
 
 pub struct ClipboardDb {
-    conn: Connection,
+    conn: Mutex<Connection>,
 }
 
 impl ClipboardDb {
@@ -62,7 +65,7 @@ impl ClipboardDb {
         debug!("Opening database connection: clipboard_history.db");
         let conn = Connection::open("clipboard_history.db")?;
         conn.execute(QUERY_CREATE_TABLE, [])?;
-        Ok(Self { conn })
+        Ok(Self { conn: Mutex::new(conn) })
     }
 
     pub fn insert_entry(
@@ -72,8 +75,8 @@ impl ClipboardDb {
         img: Option<&[u8]>,
     ) -> Result<()> {
         debug!("Inserting new {:?} entry into database", c_type);
-        self.conn
-            .execute(INSERT_QUERY, params![c_type.as_str(), text, img])?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(INSERT_QUERY, params![c_type.as_str(), text, img])?;
         debug!("Database: Successfully saved new {:?}", c_type);
         Ok(())
     }
@@ -81,9 +84,8 @@ impl ClipboardDb {
     pub fn set_pin_status(&self, id: i64, pinned: bool) -> Result<()> {
         let status = if pinned { "pinned" } else { "unpinned" };
         debug!("Updating pin status for ID: {} to {}", id, status);
-
-        self.conn
-            .execute(SET_PIN_QUERY, params![pinned as i32, id])?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(SET_PIN_QUERY, params![pinned as i32, id])?;
         debug!(
             "Item {} {}",
             id,
@@ -94,9 +96,9 @@ impl ClipboardDb {
 
     pub fn get_pinned_items(&self) -> Result<Vec<HistoryEntry>, Box<dyn std::error::Error>> {
         debug!("Fetching pinned items from database");
-        let mut stmt = self.conn.prepare(GET_PINNED_QUERY)?;
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(GET_PINNED_QUERY)?;
 
-        // 1. Map the rows to HistoryEntry structs
         let item_iter = stmt.query_map([], |row| {
             let ct_raw: String = row.get(1)?;
             Ok(HistoryEntry {
@@ -115,7 +117,8 @@ impl ClipboardDb {
 
     pub fn get_ordered_items(&self) -> Result<Vec<HistoryEntry>, Box<dyn std::error::Error>> {
         debug!("Fetching items from database");
-        let mut stmt = self.conn.prepare(GET_ENTRIES_QUERY)?;
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(GET_ENTRIES_QUERY)?;
 
         // 1. Map the rows to HistoryEntry structs
         let item_iter = stmt.query_map([], |row| {
@@ -135,7 +138,8 @@ impl ClipboardDb {
     }
 
     pub fn get_entry(&self, id: i64) -> Result<HistoryEntry> {
-        self.conn.query_row(GET_ENTRY_QUERY, [id], |row| {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(GET_ENTRY_QUERY, [id], |row| {
             let ct_raw: String = row.get(1)?;
             Ok(HistoryEntry {
                 id: row.get(0)?,
@@ -149,8 +153,9 @@ impl ClipboardDb {
 
     pub fn clear_history(&self) -> Result<()> {
         warn!("Clearing all clipboard history from database!");
-        self.conn.execute(TRUNCATE_QUERY, [])?;
-        self.conn.execute(VACUUM_QUERY, [])?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(TRUNCATE_QUERY, [])?;
+        conn.execute(VACUUM_QUERY, [])?;
         info!("History cleared and database vacuumed.");
         Ok(())
     }
