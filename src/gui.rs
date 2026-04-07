@@ -98,21 +98,23 @@ impl ClipboardGui {
 
     fn send_command_to_daemon(cmd: Command) {
         let socket_path = "/tmp/clip_rust.sock";
-
         match UnixStream::connect(socket_path) {
             Ok(mut stream) => {
                 if let Ok(msg) = serde_json::to_string(&cmd) {
-                    if let Err(e) = stream.write_all(msg.as_bytes()) {
-                        log::error!("Failed to write to daemon socket: {}", e);
-                    } else {
-                        log::debug!("Command {:?} sent to daemon successfully", cmd);
-                    }
+                    let _ = stream.write_all(msg.as_bytes());
                 }
             }
-            Err(e) => {
-                log::error!("Could not connect to daemon at {}: {}", socket_path, e);
-            }
+            Err(e) => log::error!("Could not connect to daemon: {}", e),
         }
+    }
+
+    fn clear_history(&mut self) {
+        Self::send_command_to_daemon(Command::Clear);
+        self.items.clear();
+        self.textures.clear();
+        self.offset = 0;
+        self.has_more = true;
+        self.load_more();
     }
 }
 
@@ -120,9 +122,10 @@ impl eframe::App for ClipboardGui {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui.ctx().set_pixels_per_point(1.2);
 
-        let bg_color = egui::Color32::from_rgb(20, 20, 20);      // Deep blackish
-        let hover_color = egui::Color32::from_rgb(40, 40, 40);   // Lighter grey-black on hover
-        let text_color = egui::Color32::from_rgb(190, 190, 190); // Light grey text
+        // Theme Colors
+        let bg_color = egui::Color32::from_rgb(27, 27, 27);
+        let hover_overlay = egui::Color32::from_rgba_premultiplied(50, 50, 50, 10);
+        let text_color = egui::Color32::from_rgb(180, 180, 180);
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.horizontal(|ui| {
@@ -158,118 +161,105 @@ impl eframe::App for ClipboardGui {
                     self.load_more();
                 }
 
-                if !self.search_query.is_empty() {
-                    if ui.button(egui::RichText::new("❌").color(text_color)).clicked() {
-                        self.search_query.clear();
-                        self.items.clear();
-                        self.offset = 0;
-                        self.has_more = true;
-                        self.load_more();
-                    }
-                }
-
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(egui::RichText::new("🗑").color(text_color)).clicked() {
-                        Self::send_command_to_daemon(Command::Clear);
+                        self.clear_history();
+                    }
+                    if !self.search_query.is_empty() {
+                        if ui.button(egui::RichText::new("❌").color(text_color)).clicked() {
+                            self.search_query.clear();
+                            self.items.clear();
+                            self.offset = 0;
+                            self.has_more = true;
+                            self.load_more();
+                        }
                     }
                 });
             });
 
+            ui.add_space(8.0);
             ui.separator();
 
             let mut toggle_pin_id = None;
-            let load_more_triggered =
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .show(ui, |ui| {
-                        let mut trigger_load = false;
 
-                        for item in &self.items {
-                            let row_width = ui.available_width();
-                            let id = ui.make_persistent_id(item.id);
-                            let is_hovered = ui.interact(ui.max_rect(), id, egui::Sense::hover()).hovered();
-                            let bg_color = if is_hovered {
-                                egui::Color32::from_rgb(50, 50, 50) // Lighter "Glow"
-                            } else {
-                                egui::Color32::from_rgb(27, 27, 27) // Dark base
-                            };
-                            let text_color = egui::Color32::from_rgb(190, 190, 190);
-                            let frame_res = egui::Frame::default()
-                                .inner_margin(egui::Margin::same(4))
-                                .fill(bg_color)
-                                .show(ui, |ui| {
-                                    ui.set_width(row_width);
-                                    ui.horizontal(|ui| {
-                                        // Pin Indicator
-                                        if item.is_pinned {
-                                            ui.label(egui::RichText::new("📌").size(16.0));
-                                        }
+            let load_more_triggered = egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    let mut trigger_load = false;
 
-                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                            match &item.preview {
-                                                PreviewContent::Text(text) => {
-                                                    ui.label(egui::RichText::new(text).color(text_color));
-                                                }
-                                                PreviewContent::Image(bytes) => {
-                                                    ui.push_id(item.id, |ui| {
-                                                        if !self.textures.contains_key(&item.id) {
-                                                            if let Ok(image) = image::load_from_memory(bytes) {
-                                                                let image = image.to_rgba8();
-                                                                let size = [image.width() as usize, image.height() as usize];
-                                                                let pixels = image.into_vec();
-                                                                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-                                                                let texture = ui.ctx().load_texture(
-                                                                    format!("clipboard_img_{}", item.id),
-                                                                    color_image,
-                                                                    egui::TextureOptions::default(),
-                                                                );
-                                                                self.textures.insert(item.id, texture);
-                                                            }
-                                                        }
+                    for item in &self.items {
+                        let row_width = ui.available_width();
+                        let row_id = ui.make_persistent_id(item.id);
 
-                                                        if let Some(texture) = self.textures.get(&item.id) {
-                                                            ui.add(
-                                                                egui::Image::new(texture)
-                                                                    .maintain_aspect_ratio(true)
-                                                                    .max_size(egui::vec2(row_width * 0.8, 300.0))
-                                                                    .corner_radius(4.0)
-                                                            );
-                                                        }
-                                                    });
-                                                }
+                        // Paint Frame
+                        let frame_res = egui::Frame::default()
+                            .inner_margin(egui::Margin::same(4))
+                            .fill(bg_color)
+                            .show(ui, |ui| {
+                                ui.set_width(row_width);
+                                ui.horizontal(|ui| {
+                                    if item.is_pinned {
+                                        ui.label(egui::RichText::new("📌").size(8.0));
+                                    }
+                                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        match &item.preview {
+                                            PreviewContent::Text(text) => {
+                                                ui.label(egui::RichText::new(text).color(text_color));
                                             }
-                                        });
+                                            PreviewContent::Image(bytes) => {
+                                                ui.push_id(item.id, |ui| {
+                                                    if !self.textures.contains_key(&item.id) {
+                                                        if let Ok(image) = image::load_from_memory(bytes) {
+                                                            let image = image.to_rgba8();
+                                                            let size = [image.width() as usize, image.height() as usize];
+                                                            let pixels = image.into_vec();
+                                                            let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                                                            let texture = ui.ctx().load_texture(
+                                                                format!("clipboard_img_{}", item.id),
+                                                                color_image,
+                                                                egui::TextureOptions::default(),
+                                                            );
+                                                            self.textures.insert(item.id, texture);
+                                                        }
+                                                    }
+                                                    if let Some(texture) = self.textures.get(&item.id) {
+                                                        ui.add(egui::Image::new(texture)
+                                                            .maintain_aspect_ratio(true)
+                                                            .max_size(egui::vec2(row_width * 0.8, 300.0)));
+                                                    }
+                                                });
+                                            }
+                                        }
                                     });
                                 });
-
-                            let row_interact = ui.interact(frame_res.response.rect, id, egui::Sense::click());
-
-                            if row_interact.clicked() {
-                                Self::send_command_to_daemon(Command::Copy(item.id));
-                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
-
-                            row_interact.context_menu(|ui| {
-                                let label = if item.is_pinned { "Unpin" } else { "Pin" };
-                                if ui.button(label).clicked() {
-                                    toggle_pin_id = Some(item.id);
-                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                                }
                             });
 
-                            ui.add_space(6.0);
+                        let row_interact = ui.interact(frame_res.response.rect, row_id, egui::Sense::click());
+                        if row_interact.hovered() {
+                            ui.painter().rect_filled(frame_res.response.rect, 0.0, hover_overlay);
+                        }
+                        if row_interact.clicked() {
+                            Self::send_command_to_daemon(Command::Copy(item.id));
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                         }
 
-                        if self.has_more && !self.is_loading {
-                            ui.add_space(10.0);
-                            let bottom_rect = ui.allocate_space(egui::vec2(1.0, 1.0)).1;
-                            if ui.is_rect_visible(bottom_rect) {
-                                trigger_load = true;
+                        row_interact.context_menu(|ui| {
+                            let label = if item.is_pinned { "Unpin" } else { "Pin" };
+                            if ui.button(label).clicked() {
+                                toggle_pin_id = Some(item.id);
+                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                             }
-                        }
+                        });
 
-                        trigger_load
-                    });
+                        ui.add_space(6.0);
+                    }
+
+                    if self.has_more && !self.is_loading {
+                        let bottom_rect = ui.allocate_space(egui::vec2(1.0, 1.0)).1;
+                        if ui.is_rect_visible(bottom_rect) { trigger_load = true; }
+                    }
+                    trigger_load
+                }).inner;
 
             if let Some(id) = toggle_pin_id {
                 Self::send_command_to_daemon(Command::TogglePin(id));
@@ -279,7 +269,7 @@ impl eframe::App for ClipboardGui {
                 self.load_more();
             }
 
-            if load_more_triggered.inner {
+            if load_more_triggered {
                 self.load_more();
             }
         });
