@@ -119,31 +119,35 @@ impl ClipboardGui {
 impl eframe::App for ClipboardGui {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui.ctx().set_pixels_per_point(1.2);
+
+        let bg_color = egui::Color32::from_rgb(20, 20, 20);      // Deep blackish
+        let hover_color = egui::Color32::from_rgb(40, 40, 40);   // Lighter grey-black on hover
+        let text_color = egui::Color32::from_rgb(190, 190, 190); // Light grey text
+
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("🔍");
+                ui.heading(egui::RichText::new("🔍").color(text_color));
 
                 let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
                     let bidi_text = Self::format_bidi(text.as_str());
-
                     let mut job = egui::text::LayoutJob::default();
+                    job.halign = egui::Align::RIGHT;
                     job.append(
                         &bidi_text,
                         0.0,
                         egui::TextFormat {
-                            font_id: egui::FontId::proportional(14.0),
-                            color: ui.visuals().text_color(),
+                            font_id: egui::FontId::proportional(16.0),
+                            color: text_color,
                             ..Default::default()
                         },
                     );
                     job.wrap.max_width = wrap_width;
-
                     ui.fonts_mut(|f| f.layout_job(job))
                 };
 
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.search_query)
-                        .horizontal_align(egui::Align::RIGHT)
+                        .hint_text("Search...")
                         .layouter(&mut layouter),
                 );
 
@@ -155,7 +159,7 @@ impl eframe::App for ClipboardGui {
                 }
 
                 if !self.search_query.is_empty() {
-                    if ui.button("❌").clicked() {
+                    if ui.button(egui::RichText::new("❌").color(text_color)).clicked() {
                         self.search_query.clear();
                         self.items.clear();
                         self.offset = 0;
@@ -163,6 +167,12 @@ impl eframe::App for ClipboardGui {
                         self.load_more();
                     }
                 }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(egui::RichText::new("🗑").color(text_color)).clicked() {
+                        Self::send_command_to_daemon(Command::Clear);
+                    }
+                });
             });
 
             ui.separator();
@@ -175,23 +185,30 @@ impl eframe::App for ClipboardGui {
                         let mut trigger_load = false;
 
                         for item in &self.items {
-                            egui::Frame::default()
+                            let row_width = ui.available_width();
+                            let id = ui.make_persistent_id(item.id);
+                            let is_hovered = ui.interact(ui.max_rect(), id, egui::Sense::hover()).hovered();
+                            let bg_color = if is_hovered {
+                                egui::Color32::from_rgb(50, 50, 50) // Lighter "Glow"
+                            } else {
+                                egui::Color32::from_rgb(27, 27, 27) // Dark base
+                            };
+                            let text_color = egui::Color32::from_rgb(190, 190, 190);
+                            let frame_res = egui::Frame::default()
                                 .inner_margin(egui::Margin::same(4))
-                                .corner_radius(4.0)
+                                .fill(bg_color)
                                 .show(ui, |ui| {
-                                    ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                    ui.set_width(row_width);
+                                    ui.horizontal(|ui| {
+                                        // Pin Indicator
                                         if item.is_pinned {
-                                            ui.label(egui::RichText::new("📌").size(8.0));
+                                            ui.label(egui::RichText::new("📌").size(16.0));
                                         }
-                                        let mut response = ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+
+                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                             match &item.preview {
                                                 PreviewContent::Text(text) => {
-                                                    let res = ui.button(text);
-                                                    if res.clicked() {
-                                                        Self::send_command_to_daemon(Command::Copy(item.id));
-                                                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                                                    }
-                                                    res
+                                                    ui.label(egui::RichText::new(text).color(text_color));
                                                 }
                                                 PreviewContent::Image(bytes) => {
                                                     ui.push_id(item.id, |ui| {
@@ -206,61 +223,46 @@ impl eframe::App for ClipboardGui {
                                                                     color_image,
                                                                     egui::TextureOptions::default(),
                                                                 );
-
                                                                 self.textures.insert(item.id, texture);
                                                             }
                                                         }
 
                                                         if let Some(texture) = self.textures.get(&item.id) {
-                                                            let image = egui::Image::new(texture)
-                                                                .maintain_aspect_ratio(true)
-                                                                .max_size(egui::vec2(200.0, 200.0))
-                                                                .corner_radius(4.0);
-
-                                                            let img_button = egui::Button::image(image)
-                                                                .fill(egui::Color32::TRANSPARENT)
-                                                                .corner_radius(8.0);
-
-                                                            let res = ui.add_sized([200.0, 200.0], img_button);
-                                                            if res.clicked() {
-                                                                Self::send_command_to_daemon(Command::Copy(item.id));
-                                                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                                                            }
-                                                            res
-                                                        } else {
-                                                            ui.label("Loading...") // Fallback for loading state
+                                                            ui.add(
+                                                                egui::Image::new(texture)
+                                                                    .maintain_aspect_ratio(true)
+                                                                    .max_size(egui::vec2(row_width * 0.8, 300.0))
+                                                                    .corner_radius(4.0)
+                                                            );
                                                         }
-                                                    }).inner
+                                                    });
                                                 }
-                                            }
-                                        }).inner;
-
-                                        if response.hovered() {
-                                            response = response.highlight();
-                                        }
-
-                                        response.context_menu(|ui| {
-                                            let label = if item.is_pinned { "Unpin" } else { "Pin" };
-                                            if ui.button(label).clicked() {
-                                                toggle_pin_id = Some(item.id);
-                                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                                             }
                                         });
                                     });
                                 });
 
-                            ui.add_space(2.0);
+                            let row_interact = ui.interact(frame_res.response.rect, id, egui::Sense::click());
+
+                            if row_interact.clicked() {
+                                Self::send_command_to_daemon(Command::Copy(item.id));
+                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+
+                            row_interact.context_menu(|ui| {
+                                let label = if item.is_pinned { "Unpin" } else { "Pin" };
+                                if ui.button(label).clicked() {
+                                    toggle_pin_id = Some(item.id);
+                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                                }
+                            });
+
+                            ui.add_space(6.0);
                         }
 
                         if self.has_more && !self.is_loading {
                             ui.add_space(10.0);
-                            ui.add(egui::Spinner::new());
-                            ui.add_space(10.0);
-
-                            // Allocate a 1x1 invisible rectangle at the very bottom for the scrolling effect
                             let bottom_rect = ui.allocate_space(egui::vec2(1.0, 1.0)).1;
-
-                            // If this rectangle enters the visible screen area, we've scrolled to the bottom
                             if ui.is_rect_visible(bottom_rect) {
                                 trigger_load = true;
                             }
