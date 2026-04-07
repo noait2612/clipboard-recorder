@@ -113,8 +113,8 @@ impl ClipboardGui {
         self.items.clear();
         self.textures.clear();
         self.offset = 0;
-        self.has_more = true;
-        self.load_more();
+        self.has_more = false;
+        self.is_loading = false;
     }
 }
 
@@ -148,13 +148,14 @@ impl eframe::App for ClipboardGui {
                     ui.fonts_mut(|f| f.layout_job(job))
                 };
 
-                let response = ui.add(
+                let search_response = ui.add_sized(
+                    [250.0, 15.0],
                     egui::TextEdit::singleline(&mut self.search_query)
                         .hint_text("Search...")
-                        .layouter(&mut layouter),
+                        .layouter(&mut layouter)
                 );
 
-                if response.changed() {
+                if search_response.changed() {
                     self.items.clear();
                     self.offset = 0;
                     self.has_more = true;
@@ -185,13 +186,18 @@ impl eframe::App for ClipboardGui {
             let load_more_triggered = egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
+                    if self.items.is_empty() {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(egui::RichText::new("No history found").italics().color(text_color));
+                        });
+                        return false;
+                    }
                     let mut trigger_load = false;
-
                     for item in &self.items {
                         let row_width = ui.available_width();
                         let row_id = ui.make_persistent_id(item.id);
 
-                        // Paint Frame
                         let frame_res = egui::Frame::default()
                             .inner_margin(egui::Margin::same(4))
                             .fill(bg_color)
@@ -204,7 +210,8 @@ impl eframe::App for ClipboardGui {
                                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                         match &item.preview {
                                             PreviewContent::Text(text) => {
-                                                ui.label(egui::RichText::new(text).color(text_color));
+                                                ui.set_height(10.0);
+                                                ui.label(egui::RichText::new(text).color(text_color).size(12.0));
                                             }
                                             PreviewContent::Image(bytes) => {
                                                 ui.push_id(item.id, |ui| {
@@ -225,7 +232,7 @@ impl eframe::App for ClipboardGui {
                                                     if let Some(texture) = self.textures.get(&item.id) {
                                                         ui.add(egui::Image::new(texture)
                                                             .maintain_aspect_ratio(true)
-                                                            .max_size(egui::vec2(row_width * 0.8, 300.0)));
+                                                            .max_size(egui::vec2(150.0, 150.0)));
                                                     }
                                                 });
                                             }

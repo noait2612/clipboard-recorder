@@ -28,7 +28,7 @@ impl ImageFormatter {
 
     fn generate_thumbnail(&self, full_png_bytes: &[u8]) -> Option<Vec<u8>> {
         if let Ok(dynamic_img) = image::load_from_memory(full_png_bytes) {
-            let thumb = dynamic_img.thumbnail(300, 300);
+            let thumb = dynamic_img.thumbnail(150, 150);
             let mut out_bytes = Cursor::new(Vec::new());
             if thumb.write_to(&mut out_bytes, ImageFormat::Png).is_ok() {
                 return Some(out_bytes.into_inner());
