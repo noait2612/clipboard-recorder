@@ -1,9 +1,8 @@
 use crate::database::ClipboardDb;
 use crate::formatters::find_deserializer;
-use crate::types::{Command, ContentType, PreviewContent};
+use crate::types::{Command, PreviewContent};
 use eframe::egui;
 use eframe::egui::Ui;
-use log::error;
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::net::UnixStream;
@@ -12,6 +11,7 @@ use unicode_bidi::BidiInfo;
 pub struct GuiItem {
     pub id: i64,
     pub preview: PreviewContent,
+    pub is_pinned: bool,
 }
 
 pub struct ClipboardGui {
@@ -84,6 +84,7 @@ impl ClipboardGui {
                 self.items.push(GuiItem {
                     id: entry.id,
                     preview,
+                    is_pinned: entry.is_pinned,
                 });
             }
 
@@ -166,6 +167,7 @@ impl eframe::App for ClipboardGui {
 
             ui.separator();
 
+            let mut toggle_pin_id = None;
             let load_more_triggered =
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
@@ -178,50 +180,72 @@ impl eframe::App for ClipboardGui {
                                 .corner_radius(4.0)
                                 .show(ui, |ui| {
                                     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                                        match &item.preview {
-                                            PreviewContent::Text(text) => {
-                                                if ui.button(text).clicked() {
-                                                    Self::send_command_to_daemon(Command::Copy(item.id));
-                                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                                        if item.is_pinned {
+                                            ui.label(egui::RichText::new("📌").size(8.0));
+                                        }
+                                        let mut response = ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                            match &item.preview {
+                                                PreviewContent::Text(text) => {
+                                                    let res = ui.button(text);
+                                                    if res.clicked() {
+                                                        Self::send_command_to_daemon(Command::Copy(item.id));
+                                                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                                                    }
+                                                    res
+                                                }
+                                                PreviewContent::Image(bytes) => {
+                                                    ui.push_id(item.id, |ui| {
+                                                        if !self.textures.contains_key(&item.id) {
+                                                            if let Ok(image) = image::load_from_memory(bytes) {
+                                                                let image = image.to_rgba8();
+                                                                let size = [image.width() as usize, image.height() as usize];
+                                                                let pixels = image.into_vec();
+                                                                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                                                                let texture = ui.ctx().load_texture(
+                                                                    format!("clipboard_img_{}", item.id),
+                                                                    color_image,
+                                                                    egui::TextureOptions::default(),
+                                                                );
+
+                                                                self.textures.insert(item.id, texture);
+                                                            }
+                                                        }
+
+                                                        if let Some(texture) = self.textures.get(&item.id) {
+                                                            let image = egui::Image::new(texture)
+                                                                .maintain_aspect_ratio(true)
+                                                                .max_size(egui::vec2(200.0, 200.0))
+                                                                .corner_radius(4.0);
+
+                                                            let img_button = egui::Button::image(image)
+                                                                .fill(egui::Color32::TRANSPARENT)
+                                                                .corner_radius(8.0);
+
+                                                            let res = ui.add_sized([200.0, 200.0], img_button);
+                                                            if res.clicked() {
+                                                                Self::send_command_to_daemon(Command::Copy(item.id));
+                                                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                                                            }
+                                                            res
+                                                        } else {
+                                                            ui.label("Loading...") // Fallback for loading state
+                                                        }
+                                                    }).inner
                                                 }
                                             }
-                                            PreviewContent::Image(bytes) => {
-                                                ui.push_id(item.id, |ui| {
-                                                    if !self.textures.contains_key(&item.id) {
-                                                        if let Ok(image) = image::load_from_memory(bytes) {
-                                                            let image = image.to_rgba8();
-                                                            let size = [image.width() as usize, image.height() as usize];
-                                                            let pixels = image.into_vec();
-                                                            let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-                                                            let texture = ui.ctx().load_texture(
-                                                                format!("clipboard_img_{}", item.id),
-                                                                color_image,
-                                                                egui::TextureOptions::default(),
-                                                            );
+                                        }).inner;
 
-                                                            self.textures.insert(item.id, texture);
-                                                        }
-                                                    }
-
-                                                    if let Some(texture) = self.textures.get(&item.id) {
-                                                        let image = egui::Image::new(texture)
-                                                            .maintain_aspect_ratio(true)
-                                                            .max_size(egui::vec2(200.0, 200.0))
-                                                            .corner_radius(4.0);
-
-                                                        let img_button = egui::Button::image(image)
-                                                            .fill(egui::Color32::TRANSPARENT)
-                                                            .corner_radius(8.0);
-                                                        let response = ui.add_sized([200.0, 200.0], img_button);
-
-                                                        if response.clicked() {
-                                                            Self::send_command_to_daemon(Command::Copy(item.id));
-                                                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                                                        }
-                                                    }
-                                                });
-                                            }
+                                        if response.hovered() {
+                                            response = response.highlight();
                                         }
+
+                                        response.context_menu(|ui| {
+                                            let label = if item.is_pinned { "Unpin" } else { "Pin" };
+                                            if ui.button(label).clicked() {
+                                                toggle_pin_id = Some(item.id);
+                                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                                            }
+                                        });
                                     });
                                 });
 
@@ -244,6 +268,14 @@ impl eframe::App for ClipboardGui {
 
                         trigger_load
                     });
+
+            if let Some(id) = toggle_pin_id {
+                Self::send_command_to_daemon(Command::TogglePin(id));
+                self.items.clear();
+                self.offset = 0;
+                self.has_more = true;
+                self.load_more();
+            }
 
             if load_more_triggered.inner {
                 self.load_more();

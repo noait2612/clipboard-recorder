@@ -16,7 +16,7 @@ pub fn start(db: Arc<ClipboardDb>) -> Result<(), Box<dyn std::error::Error>> {
         seed_formatters(&mut clipboard);
         loop {
             if let Some(saver) = find_serializer(&mut clipboard) {
-                if saver.save(&mut clipboard, &watcher_db).unwrap_or(false) {
+                if saver.save(&mut clipboard, &watcher_db).unwrap() {
                     clear_all_except(saver);
                 }
             }
@@ -53,13 +53,20 @@ fn handle_command(cmd: Command, db: Arc<ClipboardDb>) {
         Command::Copy(id) => {
             if let Ok(entry) = db.get_entry(id) {
                 let mut cb = Clipboard::new().unwrap();
-                let restorer = find_deserializer(&entry.content_type);
-                let _ = restorer.restore(&mut cb, &entry);
+                let deserializer = find_deserializer(&entry.content_type);
+                let _ = deserializer.restore(&mut cb, &entry);
             }
         }
         Command::Clear => {
-
+            if let Err(e) = db.clear_history() {
+                log::error!("Failed to Clear history");
+            }
         },
+        Command::TogglePin(id) => {
+            if let Err(e) = db.set_pin_status(id) {
+                log::error!("Failed to toggle pin for item {}: {}", id, e);
+            }
+        }
         _ => todo!()
     }
 }

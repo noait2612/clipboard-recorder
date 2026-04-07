@@ -22,29 +22,23 @@ const INSERT_QUERY: &str = "
     VALUES (?1, ?2, ?3)";
 
 const GET_ENTRY_QUERY: &str = "
-    SELECT id, content_type, text_content, image_blob, created_at
+    SELECT id, content_type, text_content, image_blob, is_pinned, created_at
     FROM history WHERE id = ?1";
 
-const GET_PINNED_QUERY: &str = "
-    SELECT id, content_type, text_content, image_blob, created_at
-    FROM history
-    WHERE is_pinned = 1
-    ORDER BY created_at DESC";
-
 const GET_PAGINATED_QUERY: &str = "
-    SELECT id, content_type, text_content, image_blob, created_at
+    SELECT id, content_type, text_content, image_blob, is_pinned, created_at
     FROM history
-    ORDER BY created_at DESC
+    ORDER BY is_pinned DESC, created_at DESC
     LIMIT ?1 OFFSET ?2";
 
 const SEARCH_PAGINATED_QUERY: &str = "
-    SELECT id, content_type, text_content, image_blob, created_at
+    SELECT id, content_type, text_content, image_blob, is_pinned, created_at
     FROM history
     WHERE text_content LIKE ?1
-    ORDER BY created_at DESC
+    ORDER BY is_pinned DESC, created_at DESC
     LIMIT ?2 OFFSET ?3";
 
-const SET_PIN_QUERY: &str = "UPDATE history SET is_pinned = ?1 WHERE id = ?2";
+const SET_PIN_STATUS_QUERY: &str = "UPDATE history SET is_pinned = 1 - is_pinned WHERE id = ?";
 const TRUNCATE_QUERY: &str = "DELETE FROM history";
 const VACUUM_QUERY: &str = "VACUUM";
 const TIME_FORMAT: &str = "%m-%d-%Y %H:%M:%S";
@@ -63,6 +57,7 @@ pub struct HistoryEntry {
     pub text_content: Option<String>,
     pub image_blob: Option<Vec<u8>>,
     pub created_at: String,
+    pub is_pinned : bool
 }
 
 pub struct ClipboardDb {
@@ -92,38 +87,11 @@ impl ClipboardDb {
         Ok(())
     }
 
-    pub fn set_pin_status(&self, id: i64, pinned: bool) -> Result<()> {
-        let status = if pinned { "pinned" } else { "unpinned" };
-        debug!("Updating pin status for ID: {} to {}", id, status);
+    pub fn set_pin_status(&self, id: i64) -> Result<()> {
+        debug!("Updating pin status for ID: {}", id);
         let conn = self.conn.lock().unwrap();
-        conn.execute(SET_PIN_QUERY, params![pinned as i32, id])?;
-        debug!(
-            "Item {} {}",
-            id,
-            if pinned { "pinned 📌" } else { "unpinned" }
-        );
+        conn.execute(SET_PIN_STATUS_QUERY, params![id])?;
         Ok(())
-    }
-
-    pub fn get_pinned_items(&self) -> Result<Vec<HistoryEntry>, Box<dyn error::Error>> {
-        debug!("Fetching pinned items from database");
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(GET_PINNED_QUERY)?;
-
-        let item_iter = stmt.query_map([], |row| {
-            let ct_raw: String = row.get(1)?;
-            Ok(HistoryEntry {
-                id: row.get(0)?,
-                content_type: ContentType::from_str(&ct_raw).unwrap_or(ContentType::Text),
-                text_content: row.get(2)?,
-                image_blob: row.get(3)?,
-                created_at: to_readable_time(row.get(4)?),
-            })
-        })?;
-
-        let items: Result<Vec<HistoryEntry>, rusqlite::Error> = item_iter.collect();
-
-        Ok(items?)
     }
 
     pub fn get_items_paginated(
@@ -142,7 +110,8 @@ impl ClipboardDb {
                 content_type: ContentType::from_str(&ct_raw).unwrap_or(ContentType::Text),
                 text_content: row.get(2)?,
                 image_blob: row.get(3)?,
-                created_at: to_readable_time(row.get(4)?),
+                is_pinned: row.get(4)?,
+                created_at: to_readable_time(row.get(5)?)
             })
         })?;
 
@@ -159,7 +128,8 @@ impl ClipboardDb {
                 content_type: ContentType::from_str(&ct_raw).unwrap_or(ContentType::Text),
                 text_content: row.get(2)?,
                 image_blob: row.get(3)?,
-                created_at: to_readable_time(row.get(4)?),
+                is_pinned: row.get(4)?,
+                created_at: to_readable_time(row.get(5)?),
             })
         })
     }
@@ -179,7 +149,8 @@ impl ClipboardDb {
                 content_type: ContentType::from_str(&ct_raw).unwrap_or(ContentType::Text),
                 text_content: row.get(2)?,
                 image_blob: row.get(3)?,
-                created_at: to_readable_time(row.get(4)?),
+                is_pinned: row.get(4)?,
+                created_at: to_readable_time(row.get(5)?),
             })
         })?;
 

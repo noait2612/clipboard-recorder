@@ -29,13 +29,8 @@ impl ContentType {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Command {
-    Pin(i64),
-    Unpin(i64),
+    TogglePin(i64),
     Copy(i64),
-    List,
-    ListPinned,
-    Help,
-    Exit,
     Clear,
     Unknown,
 }
